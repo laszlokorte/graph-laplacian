@@ -1,0 +1,7 @@
+import numpy as np
+def to_js_complex_array(arr):
+	return [[(z.real, z.imag) for z in row] for row in arr]
+L = np.array(L)
+vals, vecs = np.linalg.eig(L)
+vals_list = [(z.real, z.imag) for z in vals]
+vecs_list = to_js_complex_array(vecs)
