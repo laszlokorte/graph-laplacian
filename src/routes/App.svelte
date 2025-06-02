@@ -1,45 +1,16 @@
 <script>
 	import {onMount} from 'svelte'
+	import { on } from 'svelte/events';
 	import {eigs} from 'mathjs';
-	import eigenpy from './eigen.py?raw'
 
 	let computeEigen = $state(() => [])
  
-	function onLoadjs() {
-		return (node) => {
-			node.onload= async () => {
-				try {
-					const pyodide = await loadPyodide();
-			 		await pyodide.loadPackage("numpy");
-					computeEigen = (matrix) => {
-					
-						pyodide.globals.set("L", matrix);
-						pyodide.runPython(eigenpy); 
-
-						const eigenvalues = pyodide.globals.get("vals_list").toJs();
-						const eigenvectors = pyodide.globals.get("vecs_list").toJs();
-
-						console.log(eigenvectors)
-
-						return {
-							eigenvalues: eigenvalues,
-							eigenvectors: eigenvectors,
-						}
-					}
-				} catch(e) {
-					console.error(e)
-				}
-			}
-		} 
-	}
-	
 	const radius = 10
 	const numf = new Intl.NumberFormat("en-US", { signDisplay: "always", maximumFractionDigits: 3, minimumFractionDigits: 3 });
-	const magnumf = new Intl.NumberFormat("en-US", { signDisplay: "never", maximumFractionDigits: 3, minimumFractionDigits: 3 });
-	const phasenumf = new Intl.NumberFormat("en-US", { signDisplay: "never", maximumFractionDigits: 3, minimumFractionDigits: 3 });
+	const inputnumf = new Intl.NumberFormat("en-US", {maximumFractionDigits: 3, minimumFractionDigits: 3 });
 	const phaseSign = (x) => x<0?'-':'';
 	let graph = $state({
-		nodes: [{x:0,y:0}],
+		nodes: [{x:0,y:0, value:0}],
 		edges: {},
 	})
 
@@ -72,18 +43,61 @@
 		}
 	}
 
+	function addNodeBetween(evt,a,b) {
+		evt.stopPropagation()
+		evt.preventDefault()
+		setEdge(a,b,false)
+		addNode(evt, {x: (graph.nodes[a].x + graph.nodes[b].x)/2,
+			y: (graph.nodes[a].y + graph.nodes[b].y) / 2})
+
+		setEdge(a,graph.nodes.length-1, true)
+		setEdge(b,graph.nodes.length-1, true)
+
+	}
+
 	const D = $derived(graph.nodes.map((n,a) => Array(graph.nodes.length).fill(nodeDegree(a)).map((d,b) => a==b?d: 0)));
 
 	const A = $derived(graph.nodes.map((n,a) => Array(graph.nodes.length).fill(nodeDegree(a)).map((d,b) => a==b?0: hasEdge(a,b) ? 1 : 0)));
 
 	const L = $derived(graph.nodes.map((n,a) => Array(graph.nodes.length).fill(nodeDegree(a)).map((d,b) => a==b?d: hasEdge(a,b) ? -1:0)));
 	
-	const eig = $derived(computeEigen(L));
+	const eig = $derived(L.length ? eigs(L): {eigenvectors: [], values: []});
 
-	$inspect(eig)
 	
 	function addNode(evt, pos) {
-		graph.nodes.push(pos)
+		evt.stopPropagation()
+		graph.nodes.push({...pos, value: 0})
+	}
+
+	function removeNode(i) {
+		graph.nodes.splice(i, 1)
+		graph.edges = Object.fromEntries(Object.entries(graph.edges).filter(([a,_]) => a.split("/").indexOf(""+i) < 0))
+	}
+
+	function draggable(node) {
+		let dx = 0, dy = 0
+		return withPosition({
+			pointerdown: (evt, pos) => {
+				if(evt.isPrimary) {
+					evt.preventDefault()
+					evt.currentTarget.setPointerCapture(evt.pointerId)
+					dx = pos.x - node.x
+					dy = pos.y - node.y
+				}
+			},
+			pointermove: (evt, pos) => {
+				if(evt.isPrimary && evt.currentTarget.hasPointerCapture(evt.pointerId)) {
+					node.x = pos.x - dx
+					node.y = pos.y - dy
+				}
+
+			},
+
+			click: (evt) => {
+				evt.stopPropagation()
+			}
+
+		})
 	}
 	
 	function withPosition(events) {
@@ -106,48 +120,86 @@
 
 			const handlers = Object.entries(events).map(([e,fn]) => [e, addPosition(fn)])
 			
-			handlers.forEach(([e,fn]) => {
-				node.addEventListener(e, fn)
-			})  
+			const dispose = handlers.map(([e,fn]) => on(node, e, fn))  
 			return () => {
-				handlers.forEach(([e,fn]) => {
-					node.removeEventListener(e, fn)
-				})
+				dispose.forEach((d) => d())
 			}
 		}
 	}  
+
+	function loadEigen(index) {
+		let i = 0;
+		for(let v of eig.eigenvectors[index].vector) {
+			graph.nodes[i].value = v
+			i++
+		}
+	}
+
+	function iterate(index) {
+		const newValues = Array(graph.nodes.length).fill(0)
+
+		for(let i =0;i<newValues.length;i++) {
+			for(let j =0;j<newValues.length;j++) {
+				newValues[i] += L[i][j] * graph.nodes[j].value
+			}
+		}
+
+		for(let i =0;i<newValues.length;i++) {
+			graph.nodes[i].value -= newValues[i] / 10
+		}
+	}
 </script>
 
 <title>Graph Spectral</title>
 
-<svelte:head>
-	<script src="https://cdn.jsdelivr.net/pyodide/v0.27.1/full/pyodide.js" {@attach onLoadjs()}></script>
-
-</svelte:head>
 <div class="stack">
 <svg class="canvas stack-layer" viewBox="-500 -500 1000 1000" {@attach withPosition({click: addNode})}>
 	{#each graph.nodes as node, a}
-		<g>
+		<g  {@attach draggable(node)}>
 			<circle cx={node.x} cy={node.y} r={2*radius} stroke="black" fill="white" />
 			<circle cx={node.x} cy={node.y} r={radius} />
+			<line stroke-linecap="round" x1={node.x} y1={node.y} x2={node.x} y2={node.y - node.value*100} stroke={node.value == 0 ? 'gray' : node.value > 0 ? 'green' : 'red'} stroke-width="10" />
 		</g>
 
 		{#each graph.nodes as target, b}
 			{#if b > a && hasEdge(a,b)}
 				<line x1={node.x} y1={node.y} x2={target.x} y2={target.y} stroke="black" />
+				<circle cursor="pointer" onclick={e => addNodeBetween(e, a,b)} fill="#ffdd00aa" cx={(node.x + target.x)/2} cy={(node.y + target.y)/2} r={radius} />
 			{/if}
 		{/each}
 	{/each}
 </svg>
 
 	<div class="stack-layer corner">
-	
+		<h2 class="titel">Graph Laplacian</h2>
 		<details open>
 			<summary>Edges</summary>
 
 			<table>
-				      	{#each L as l,a}
+				<thead>
+		            <tr>
+		            	<th>
+		            	</th>
+		            	<th>
+		            	</th>
+					{#each L as v,a}
+				            <th>
+				            		v{a}
+				            </th>
+					{/each}
+		            	<th>
+		            	</th>
+		            </tr>
+				</thead>
+				      <tbody>
+						{#each L as l,a}
 				         <tr>
+				            <th>
+				            	<button onclick={e => removeNode(a)} type="button">x</button>
+				            </th>
+				            <th>
+				            	v{a}
+				            </th>
 				         	{#each l as v,b}
 				            <td>
 				            		<input 
@@ -156,8 +208,14 @@
 				            		type="checkbox" checked={hasEdge(a,b)} />
 				            </td>
 										{/each}
+				            <td>
+				            	<input type="number" step="0.01" value={inputnumf.format(graph.nodes[a].value)} oninput={e => {
+				            		graph.nodes[a].value = e.currentTarget.valueAsNumber
+				            	}} />
+				            </td>
 				         </tr>
 								{/each}
+				      </tbody>
 				         
 				      </table>
 		</details>
@@ -213,7 +271,14 @@
 				      <mo>]</mo>
 				   </mrow>
 				</math>
+
 		</details>
+		
+		<button type="button" onclick={e => iterate()}>
+		Iterate:
+		<code>v := v - L * v</code>		
+
+		</button>
 
 		
 		<details >
@@ -224,10 +289,10 @@
 				      <mtable>
 				      	{#each eig.eigenvectors as e}
 				         <mtr>
-				         	{#each e as {re,im,ang,mag}}
+				         	{#each e.vector as v}
 				            <mtd>
-				            	<mn>{magnumf.format(mag)}</mn>
-				            	<msup>
+				            	<mn>{numf.format(v)}</mn>
+				            	<!-- <msup>
 				            		<mn>e</mn>
 				            		<mrow>
 				            		 <mo>{phaseSign(ang)}</mo>
@@ -239,7 +304,7 @@
 				            		 <mo> 	&middot;</mo>
 				            		<mn>&pi;</mn>
 				            		</mrow>
-				            	</msup>
+				            	</msup> -->
 				            </mtd>
 										{/each}
 				         </mtr>
@@ -254,11 +319,12 @@
 					<mrow>
 				      <mo>[</mo>
 				      <mtable>
-				      	{#each eig.eigenvalues as {re,im,ang,mag}}
+				      	{#each eig.values as v, i}
 				         <mtr>
 				            <mtd>
-				            	<mn>{magnumf.format(mag)}</mn>
-				            	<msup>
+				            	<mn>{numf.format(v)}</mn>
+				            	<mn><button type="button" onclick={e => loadEigen(i)}>Load</button></mn>
+				            	<!-- <msup>
 				            		<mn>e</mn>
 				            		<mrow>
 				            		 <mo>{phaseSign(ang)}</mo>
@@ -270,7 +336,7 @@
 				            		 <mo> 	&middot;</mo>
 				            		<mn>&pi;</mn>
 				            		</mrow>
-				            	</msup>
+				            	</msup> -->
 				            </mtd>
 				         </mtr>
 								{/each}
@@ -279,6 +345,7 @@
 				      <mo>]</mo>
 				   </mrow>
 				</math>
+
 		</details>
 
 	</div>
@@ -294,6 +361,10 @@
 		display: grid;
 		grid-template-columns: 1fr;
 		grid-template-rows: 1fr;
+		position: absolute;
+		inset: 0;
+		max-width: 100vw;
+		max-height: 100vh;
 	}
 
 	.stack-layer {
@@ -312,9 +383,20 @@
 		pointer-events: none;
 	}
 	
+	.titel {
+		margin: 0;
+	}
+
 	.corner {
 		align-self: start;
 		justify-self: start;
+		padding: 1em;
+		background: #fffd;
+		border: 2px solid #aaaa;
+		margin: 1em;
+		max-height: 90%;
+		overflow: auto;
+		max-width: 50%;
 	}
 
 	.plain-list {
