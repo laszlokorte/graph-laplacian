@@ -10,8 +10,8 @@
 	const inputnumf = new Intl.NumberFormat("en-US", {maximumFractionDigits: 3, minimumFractionDigits: 3 });
 	const phaseSign = (x) => x<0?'-':'';
 	let graph = $state({
-		nodes: [{x:0,y:0, value:0}],
-		edges: {},
+		nodes: Array(8).fill(0).map((_,i,all) => ({x:Math.cos(2*Math.PI*i/all.length)*200,y:Math.sin(2*Math.PI*i/all.length)*200, value:0, velo: 0})),
+		edges: Object.fromEntries(Array(8).fill(0).map((_,i,all) => [[i%all.length,(i+1)%all.length].toSorted().join("/"), true])),
 	})
 
 	function nodeDegree(n) {
@@ -66,7 +66,7 @@
 	
 	function addNode(evt, pos) {
 		evt.stopPropagation()
-		graph.nodes.push({...pos, value: 0})
+		graph.nodes.push({...pos, value: 0, velo: 0})
 	}
 
 	function removeNode(i) {
@@ -131,11 +131,21 @@
 		let i = 0;
 		for(let v of eig.eigenvectors[index].vector) {
 			graph.nodes[i].value = v
+			graph.nodes[i].velo = 0
 			i++
 		}
 	}
 
-	function iterate(index) {
+	let prevTime
+	function iterate(time) {
+		let dt = 200
+		if(time && prevTime) {
+			dt = time - prevTime
+		} else if(prevTime) {
+			prevTime = time
+			raf = requestAnimationFrame(iterate)
+			return
+		}
 		const newValues = Array(graph.nodes.length).fill(0)
 
 		for(let i =0;i<newValues.length;i++) {
@@ -145,9 +155,39 @@
 		}
 
 		for(let i =0;i<newValues.length;i++) {
-			graph.nodes[i].value -= newValues[i] / 10
+			graph.nodes[i].velo -= newValues[i] / 3
+		}
+
+		for(let i =0;i<newValues.length;i++) {
+			graph.nodes[i].value  += graph.nodes[i].velo / 2000 * dt
+		}
+
+		if(playing && time) {
+			prevTime = time
+			raf = requestAnimationFrame(iterate)
+		} else {
+
+			prevTime = null
 		}
 	}
+
+	let playing = $state(false)
+	let raf = $state(null)
+
+	function togglePlay() {
+		playing = !playing
+	}
+
+	$effect(() => {
+		if(playing) {
+			raf = requestAnimationFrame(iterate)
+		}
+
+		return () => {
+			prevTime = null
+			cancelAnimationFrame(raf)
+		}
+	})
 </script>
 
 <title>Graph Spectral</title>
@@ -158,7 +198,11 @@
 		<g  {@attach draggable(node)}>
 			<circle cx={node.x} cy={node.y} r={2*radius} stroke="black" fill="white" />
 			<circle cx={node.x} cy={node.y} r={radius} />
-			<line stroke-linecap="round" x1={node.x} y1={node.y} x2={node.x} y2={node.y - node.value*100} stroke={node.value == 0 ? 'gray' : node.value > 0 ? 'green' : 'red'} stroke-width="10" />
+			
+<line stroke-linecap="round" x1={node.x} y1={node.y} y2={node.y} x2={node.x - node.velo*10} stroke={node.velo == 0 ? 'gray' : node.velo > 0 ? 'blue' : 'orange'} stroke-width="5" />
+			<line stroke-linecap="round" x1={node.x} y1={node.y} x2={node.x} y2={node.y - node.value*100} stroke={node.value == 0 ? 'gray' : node.value > 0 ? 'green' : 'red'} stroke-width="5" />
+
+			
 		</g>
 
 		{#each graph.nodes as target, b}
@@ -187,8 +231,12 @@
 				            		v{a}
 				            </th>
 					{/each}
-		            	<th>
-		            	</th>
+				            <th>
+				            	Value
+				            </th>
+				            <th>
+				            	Momentum
+				            </th>
 		            </tr>
 				</thead>
 				      <tbody>
@@ -209,8 +257,13 @@
 				            </td>
 										{/each}
 				            <td>
-				            	<input type="number" step="0.01" value={inputnumf.format(graph.nodes[a].value)} oninput={e => {
+				            	<input size="5" type="number" step="0.01" value={inputnumf.format(graph.nodes[a].value)} oninput={e => {
 				            		graph.nodes[a].value = e.currentTarget.valueAsNumber
+				            	}} />
+				            </td>
+				            <td>
+				            	<input size="5" type="number" step="0.01" value={inputnumf.format(graph.nodes[a].velo)} oninput={e => {
+				            		graph.nodes[a].velo = e.currentTarget.valueAsNumber
 				            	}} />
 				            </td>
 				         </tr>
@@ -277,6 +330,11 @@
 		<button type="button" onclick={e => iterate()}>
 		Iterate:
 		<code>v := v - L * v</code>		
+
+		</button>
+
+		<button type="button" onclick={e => togglePlay()}>
+		{!playing ? "Play" : "Pause"}	
 
 		</button>
 
