@@ -138,12 +138,11 @@
 
 	let prevTime
 	function iterate(time) {
-		let dt = 200
+		let dt = 60
 		if(time && prevTime) {
-			dt = time - prevTime
-		} else if(prevTime) {
+			dt = Math.min(time - prevTime, 200)
+		} else if(!time && playing) {
 			prevTime = time
-			raf = requestAnimationFrame(iterate)
 			return
 		}
 		const newValues = Array(graph.nodes.length).fill(0)
@@ -166,7 +165,6 @@
 			prevTime = time
 			raf = requestAnimationFrame(iterate)
 		} else {
-
 			prevTime = null
 		}
 	}
